@@ -1,0 +1,78 @@
+name: CI/CD FastAPI - Homologacao e Producao
+
+on:
+  push:
+    branches:
+      - develop
+      - main
+
+env:
+  IMAGE_NAME: fastapi-lab9
+
+jobs:
+  build_and_deploy_homol:
+    name: Build e Deploy Homologacao
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop'
+    steps:
+      - name: Checkout do codigo
+        uses: actions/checkout@v4
+
+      - name: Gerar pacote da aplicacao
+        run: tar -czf app.tar.gz Dockerfile main.py requirements.txt
+
+      - name: Enviar arquivos para EC2 Homologacao
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST_HOMOL }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "app.tar.gz"
+          target: "/home/ec2-user"
+
+      - name: Build e Run Docker em Homologacao (Porta 8080)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST_HOMOL }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            tar -xzf app.tar.gz
+            docker build -t ${{ env.IMAGE_NAME }}:homol .
+            docker stop api-homol || true
+            docker rm api-homol || true
+            docker run -d --name api-homol -p 8080:8000 -e AMBIENTE=Homologacao ${{ env.IMAGE_NAME }}:homol
+
+  deploy_producao:
+    name: Deploy Producao
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment: producao
+    steps:
+      - name: Checkout do codigo
+        uses: actions/checkout@v4
+
+      - name: Gerar pacote da aplicacao
+        run: tar -czf app.tar.gz Dockerfile main.py requirements.txt
+
+      - name: Enviar arquivos para EC2 Producao
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          source: "app.tar.gz"
+          target: "/home/ec2-user"
+
+      - name: Build e Run Docker em Producao (Porta 80)
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            tar -xzf app.tar.gz
+            docker build -t ${{ env.IMAGE_NAME }}:prd .
+            docker stop api-prd || true
+            docker rm api-prd || true
+            docker run -d --name api-prd -p 80:8000 -e AMBIENTE=Producao ${{ env.IMAGE_NAME }}:prd
